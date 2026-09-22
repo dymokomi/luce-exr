@@ -3,7 +3,7 @@ import memory
 import strings
 import math
 import binary
-import deflate
+import compress
 import luce_exr.piz as piz
 import luce_exr.pxr24 as pxr24
 from binary import Reader, Buffer
@@ -213,7 +213,7 @@ pub func decode_chunk(image: Raster*, index: usize) -> !:
         if image.compression == 1:
             try rle_decode(data, shuffled)
         else:
-            try deflate.inflate(data, shuffled)
+            try compress.inflate(data, shuffled)
         for i in 1..<expected:
             shuffled[i] = shuffled[i - 1] +% shuffled[i] -% (u8)128
         let half = (expected + 1) // 2
@@ -362,7 +362,9 @@ pub func encode(image: const Raster*, output: Buffer*, compression: str = "zip",
             if codec == 1:
                 try rle_encode(shuffled, &packed)
             else:
-                try deflate.compress(shuffled, &packed)
+                let zipped = try compress.compress(shuffled)
+                defer free(zipped) in memory.heap
+                try packed.put(zipped)
         let offset = output.used
         for i in 0..<(usize)8:
             output.data[table + index * 8 + i] = (u8)((u64)offset >> (i * 8))

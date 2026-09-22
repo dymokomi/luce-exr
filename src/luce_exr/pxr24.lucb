@@ -1,7 +1,7 @@
 ## PXR24 predictor reconstruction, based on OpenEXR's BSD-3-Clause algorithm.
 ## Copyright (c) Contributors to the OpenEXR Project. See LICENSES/OpenEXR.txt.
 import memory
-import deflate
+import compress
 from raster import Raster, Chunk
 
 pub func decode(image: const Raster*, chunk: Chunk, data: const u8[], out: u8[]) -> !:
@@ -10,7 +10,7 @@ pub func decode(image: const Raster*, chunk: Chunk, data: const u8[], out: u8[])
         stride += 2 if channel.kind == .float16 else 3 if channel.kind == .float32 else 4
     let raw = try alloc u8[chunk.width * chunk.height * stride] in memory.heap
     defer free(raw) in memory.heap
-    try deflate.inflate(data, raw)
+    try compress.inflate(data, raw)
     var source: usize = 0
     var target: usize = 0
     for y in 0..<chunk.height:
