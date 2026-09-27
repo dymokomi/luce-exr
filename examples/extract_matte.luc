@@ -1,0 +1,9 @@
+from cryptomatte import Cryptomatte
+
+pub func main(arguments: list[str]) -> int!:
+    if arguments.length != 4:
+        print("usage: extract_matte INPUT.exr LAYER OBJECT_NAME OUTPUT.exr")
+        return 1
+    let layer = Cryptomatte.open(arguments[0], arguments[1])
+    layer.extract([arguments[2]]).save(arguments[3])
+    return 0

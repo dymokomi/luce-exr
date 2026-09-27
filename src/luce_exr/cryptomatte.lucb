@@ -1,0 +1,657 @@
+#==============================================================================================
+#
+#   cryptomatte - Cryptomatte 1.2 over EXR files
+#
+#   DESCRIPTION:
+#       Layer discovery from an EXR header's metadata, embedded and sidecar manifests, mask
+#       extraction and picking across every rank, and a weighted-sample builder that writes
+#       a Cryptomatte EXR. Cryptomatte only exists in EXR, so it lives beside the codec and
+#       works on its `Raster` rather than on any editor's image type.
+#
+#==============================================================================================
+
+import c as c_api
+import files
+import paths
+import memory
+import strings
+import math
+import interop
+import luce_exr.crypto_hash as hashing
+import luce_exr.exr as exr
+import binary
+from binary import Buffer
+from luce_exr.manifest import Manifest
+from raster import Raster
+from raster_errors import invalid, corrupt, unsupported, limit
+
+## The most bytes an EXR or a sidecar manifest may take.
+let exr_byte_limit: usize = 4294967296
+let manifest_byte_limit: usize = 67108864
+
+pub func hash_name(name: str) -> i64:
+    return (i64)hashing.murmur(name)
+
+pub func id_for_name(name: str) -> f64:
+    return hashing.identifier(name)
+
+pub func hash_to_id(value: i64) -> f64!:
+    if value < 0 or value > 4294967295:
+        error(invalid, "Cryptomatte hash must fit uint32")
+    return binary.float_value(hashing.safe_bits((u32)value))
+
+pub func metadata_key(name: str) -> interop.Owned[str]!:
+    var digits: u8[8]
+    let text = hashing.hexadecimal(hashing.murmur(name), digits)
+    return try interop.copy_text((str)text.bytes[..<7])
+
+# mark: Layers ================================================================================
+
+## How many Cryptomatte layers the EXR at `path` names (its header alone is read).
+pub func layer_count(path: str) -> usize!:
+    var raster = try read_exr(path, false)
+    defer raster.close()
+    return raster_layer_count(&raster)
+
+## The name of the EXR at `path`'s layer `index`, in header order.
+pub func layer_name(path: str, index: usize) -> interop.Owned[str]!:
+    var raster = try read_exr(path, false)
+    defer raster.close()
+    return try interop.copy_text(try raster_layer_name(&raster, index))
+
+## How many Cryptomatte layers `raster`'s metadata names.
+pub func raster_layer_count(raster: const Raster*) -> usize:
+    var count: usize = 0
+    for entry in raster.attributes:
+        if is_name_key(entry.name):
+            count += 1
+    return count
+
+## The name of `raster`'s layer `index`; a view into its metadata.
+pub func raster_layer_name(raster: const Raster*, index: usize) -> str!:
+    var count: usize = 0
+    for entry in raster.attributes:
+        if is_name_key(entry.name):
+            if count == index:
+                return try string_value(raster, entry.name)
+            count += 1
+    error(invalid, "Cryptomatte layer index out of range")
+
+func is_name_key(key: str) -> bool:
+    return strings.starts_with(key, "cryptomatte/") and strings.ends_with(key, "/name")
+
+## A string attribute's value, empty when absent.
+func string_value(raster: const Raster*, name: str) -> str!:
+    for entry in raster.attributes:
+        if entry.name == name:
+            if entry.type_name != "string":
+                error(corrupt, "Cryptomatte metadata must be strings")
+            return (str)entry.data
+    return ""
+
+func metadata(raster: const Raster*, prefix: str, suffix: str) -> str!:
+    let key = try strings.join([prefix, suffix], "")
+    defer strings.release(key)
+    return try string_value(raster, key)
+
+func set_metadata(raster: Raster*, prefix: str, suffix: str, value: str) -> !:
+    let key = try strings.join([prefix, suffix], "")
+    defer strings.release(key)
+    try raster.attribute(key, "string", value.bytes)
+
+func channel_name(layer: str, number: usize, suffix: str) -> str!:
+    var digits: u8[32]
+    let text = try strings.format_u64((u64)number, digits)
+    return try strings.join([layer, "0" if number < 10 else "", text, ".", suffix], "")
+
+func safe_sidecar(name: str) -> !:
+    if name.length == 0 or paths.is_rooted(name) or strings.contains(name, "\\") or strings.contains(name, ":") or strings.contains(name, "\0") or not strings.ends_with(name, ".json"):
+        error(invalid, "invalid Cryptomatte sidecar path")
+    var start: usize = 0
+    for i in 0..<name.length + 1:
+        if i == name.length or name.bytes[i] == '/':
+            let part = (str)name.bytes[start..<i]
+            if part == "." or part == ".." or part.length == 0:
+                error(invalid, "Cryptomatte sidecar must be a relative descendant path")
+            start = i + 1
+
+func check_path(path: str) -> !:
+    if path.length == 0 or strings.contains(path, "\0"):
+        error(invalid, "path is empty or contains a NUL byte")
+
+## The EXR at `path`, probed, and decoded when `decode` (its first part).
+func read_exr(path: str, decode: bool) -> Raster!:
+    try check_path(path)
+    var raster = Raster(max_bytes = exr_byte_limit)
+    errdefer raster.close()
+    with memory.heap:
+        raster.path = try strings.copy(path)
+        raster.encoded = try files.read_limit((c_api.str)raster.path, exr_byte_limit)
+    try exr.probe(&raster)
+    if decode:
+        try decode_all(&raster)
+    return raster
+
+func decode_all(raster: Raster*) -> !:
+    try raster.allocate()
+    for index in 0..<raster.chunks.length:
+        try exr.decode_chunk(raster, index)
+
+## Encode `raster` as EXR and write it to `path` atomically.
+func write_exr(raster: const Raster*, path: str, compression: str) -> !:
+    try check_path(path)
+    var encoded = Buffer(maximum = raster.max_bytes)
+    defer encoded.close()
+    try exr.encode(raster, &encoded, compression)
+    let destination = try strings.copy(path)
+    defer strings.release(destination)
+    try files.write_atomic((c_api.str)destination, encoded.view())
+
+# mark: Reading ===============================================================================
+
+## One Cryptomatte layer of a decoded EXR, which it owns.
+pub struct Cryptomatte:
+    var raster: Raster
+    var live: bool
+    var layer_name: str
+    var prefix: str
+    var manifest: Manifest
+    ## Each rank's R, G, B and A channel: ranks go in pairs, (R, G) then (B, A).
+    var indices: usize[]
+
+    ## Layer `layer` of the EXR at `path`; a sidecar manifest is read from beside it
+    ## unless `load_sidecar` is false.
+    pub static func open(path: str, layer: str, load_sidecar: bool = true) -> interop.Reference[Cryptomatte]!:
+        # `of` owns the raster from here, failing or not.
+        return try publish(try layer_of(try read_exr(path, true), layer, load_sidecar))
+
+    mutating func configure(layer: str, load_sidecar: bool) -> !:
+        let native = &self.raster
+        with memory.heap:
+            self.layer_name = try strings.copy(layer)
+            var found = false
+            for entry in native.attributes:
+                let key = entry.name
+                if is_name_key(key) and (try string_value(native, key)) == layer:
+                    if found or key.length <= 17 or key.length > 24:
+                        error(corrupt, "invalid or ambiguous Cryptomatte metadata key")
+                    self.prefix = try strings.copy((str)key.bytes[..<key.length - 4])
+                    found = true
+            if not found:
+                error(invalid, "Cryptomatte layer not found")
+            if (try metadata(native, self.prefix, "hash")) != "MurmurHash3_32" or (try metadata(native, self.prefix, "conversion")) != "uint32_to_float32":
+                error(unsupported, "unsupported Cryptomatte hash or conversion")
+            var maximum: usize = 0
+            var has_channels = false
+            for channel in native.channels:
+                let name = channel.name
+                if not strings.starts_with(name, layer) or name.length <= layer.length + 3:
+                    continue
+                let tail = (str)name.bytes[layer.length..]
+                let dot = strings.find_last(tail, ".") else continue
+                if dot < 2:
+                    continue
+                let suffix = (str)tail.bytes[dot + 1..]
+                if suffix != "R" and suffix != "G" and suffix != "B" and suffix != "A" and suffix != "r" and suffix != "g" and suffix != "b" and suffix != "a" and suffix != "red" and suffix != "green" and suffix != "blue" and suffix != "alpha":
+                    continue
+                let number = strings.parse_u64((str)tail.bytes[..<dot]) else continue
+                if number > 511:
+                    error(limit, "Cryptomatte channel set exceeds rank limit")
+                maximum = (usize)number if (usize)number > maximum else maximum
+                has_channels = true
+            if not has_channels:
+                error(corrupt, "Cryptomatte layer has no ranked channels")
+            self.indices = try new usize[(maximum + 1) * 4]
+            let upper: str[4] = ["R", "G", "B", "A"]
+            let lower: str[4] = ["r", "g", "b", "a"]
+            let full: str[4] = ["red", "green", "blue", "alpha"]
+            for rank in 0..<maximum + 1:
+                for color in 0..<(usize)4:
+                    let name = try channel_name(layer, rank, upper[color])
+                    defer strings.release(name)
+                    let lower_name = try channel_name(layer, rank, lower[color])
+                    defer strings.release(lower_name)
+                    let full_name = try channel_name(layer, rank, full[color])
+                    defer strings.release(full_name)
+                    let index = native.find_channel(name) catch:
+                        recover native.find_channel(lower_name) catch:
+                            recover try native.find_channel(full_name)
+                    if native.channels[index].kind != .float32:
+                        error(corrupt, "Cryptomatte channels must be lossless FLOAT32")
+                    self.indices[rank * 4 + color] = index
+            let embedded = try metadata(native, self.prefix, "manifest")
+            if embedded.length > 0:
+                try self.manifest.parse(embedded)
+            else:
+                let sidecar = try metadata(native, self.prefix, "manif_file")
+                if sidecar.length > 0 and load_sidecar:
+                    try safe_sidecar(sidecar)
+                    if native.path.length == 0:
+                        error(invalid, "byte-backed EXR has no directory for a sidecar")
+                    let file = try paths.join(paths.directory(native.path), sidecar)
+                    defer strings.release(file)
+                    let bytes = try files.read_limit((c_api.str)file, manifest_byte_limit)
+                    defer free(bytes)
+                    try self.manifest.parse((str)bytes)
+
+    func ensure_open() -> !:
+        if not self.live:
+            error(invalid, "Cryptomatte is closed")
+
+    pub func name() -> str:
+        return self.layer_name
+
+    pub func rank_count() -> usize:
+        return self.indices.length // 2
+
+    pub func manifest_count() -> usize:
+        return self.manifest.count
+
+    pub func manifest_name(index: usize) -> str!:
+        if index >= self.manifest.count:
+            error(invalid, "manifest index out of range")
+        return self.manifest.entries[index].name
+
+    pub func manifest_json() -> interop.Owned[str]!:
+        var output = Buffer(maximum = manifest_byte_limit)
+        defer output.close()
+        try self.manifest.encode(&output)
+        return try interop.copy_text((str)output.view())
+
+    pub func write_manifest(path: str) -> !:
+        try check_path(path)
+        let destination = try strings.copy(path)
+        defer strings.release(destination)
+        let encoded = try self.manifest_json()
+        defer encoded.release()
+        try files.write_atomic((c_api.str)destination, encoded.value.bytes)
+
+    pub func id_for(name: str) -> f64:
+        return binary.float_value(self.manifest.resolve(name))
+
+    ## The data window's top-left, as the EXR stores it.
+    pub func origin() -> (i64, i64):
+        return (self.raster.xmin, self.raster.ymin)
+
+    func sample(x: usize, y: usize, channel: usize) -> f64!:
+        if x >= self.raster.width or y >= self.raster.height:
+            error(invalid, "pixel index out of range")
+        return self.raster.pixels[(y * self.raster.width + x) * self.raster.channels.length + channel]
+
+    ## The ID at (`x`, `y`) in rank `rank`.
+    pub func pick(x: usize, y: usize, rank: usize = 0) -> f64!:
+        try self.ensure_open()
+        if rank >= self.rank_count():
+            error(invalid, "Cryptomatte rank out of range")
+        return try self.sample(x, y, self.indices[rank * 2])
+
+    pub func pick_name(x: usize, y: usize, rank: usize = 0) -> str!:
+        return self.manifest.name_for(binary.float_bits(try self.pick(x, y, rank)))
+
+    ## The coverage of `names` together, across every rank; `invert` gives the rest.
+    pub func extract(names: const str[], invert: bool = false) -> interop.Reference[Matte]!:
+        let ids = try alloc f64[names.length] in memory.heap
+        defer free(ids) in memory.heap
+        for i in 0..<names.length:
+            ids[i] = self.id_for(names[i])
+        return try self.extract_ids(ids, invert)
+
+    pub func extract_ids(ids: const f64[], invert: bool = false) -> interop.Reference[Matte]!:
+        var mask = try layer_mask(&self, ids, invert)
+        errdefer mask.close()
+        return try Matte.own(mask)
+
+    pub mutating func close():
+        if self.live:
+            self.raster.close()
+            self.live = false
+        with memory.heap:
+            if self.layer_name.length > 0:
+                strings.release(self.layer_name)
+            if self.prefix.length > 0:
+                strings.release(self.prefix)
+            if self.indices.length > 0:
+                free(self.indices)
+        self.manifest.close()
+        self.layer_name = ""
+        self.prefix = ""
+        var empty: usize[]
+        self.indices = empty
+
+pub let cryptomatte_type: interop.Type[Cryptomatte] = interop.Type[Cryptomatte]("Cryptomatte", Cryptomatte.close, closeable = true)
+
+## Layer `layer` of `raster` (decoded; taken, and closed on failure); a
+## sidecar is found beside `raster.path`. A free function: a method naming
+## `Raster` would keep `Cryptomatte` from Luce.
+pub func layer_of(raster: Raster, layer: str, load_sidecar: bool = true) -> Cryptomatte!:
+    var empty: usize[]
+    var made = Cryptomatte(raster = raster, live = true, layer_name = "", prefix = "", manifest = Manifest(), indices = empty)
+    errdefer made.close()
+    try made.configure(layer, load_sidecar)
+    return made
+
+## The coverage of `ids` as a one-channel ("Y") FLOAT32 raster with the source's origin.
+pub func layer_mask(layer: const Cryptomatte*, ids: const f64[], invert: bool = false) -> Raster!:
+    try layer.ensure_open()
+    for value in ids:
+        if not math.is_finite(value):
+            error(invalid, "Cryptomatte selection contains a non-finite ID")
+    let width = layer.raster.width
+    let height = layer.raster.height
+    var mask = Raster(width = width, height = height, xmin = layer.raster.xmin, ymin = layer.raster.ymin, max_bytes = exr_byte_limit)
+    errdefer mask.close()
+    try mask.channel("Y", .float32)
+    try mask.allocate()
+    for y in 0..<height:
+        for x in 0..<width:
+            var coverage: f64 = 0.0
+            for rank in 0..<layer.rank_count():
+                let bits = binary.float_bits(try layer.sample(x, y, layer.indices[rank * 2]))
+                let amount = try layer.sample(x, y, layer.indices[rank * 2 + 1])
+                if not math.is_finite(amount) or amount < 0.0 or amount > 1.0:
+                    error(corrupt, "Cryptomatte coverage outside 0-1")
+                for id in ids:
+                    if binary.float_bits(id) == bits:
+                        coverage += amount
+                        break
+            coverage = math.clamp(coverage, 0.0, 1.0)
+            mask.pixels[y * width + x] = 1.0 - coverage if invert else coverage
+    return mask
+
+
+## `layer` on the heap as a Luce object.
+func publish(layer: Cryptomatte) -> interop.Reference[Cryptomatte]!:
+    var held = layer
+    errdefer held.close()
+    var reservation = try interop.Reservation[Cryptomatte](cryptomatte_type)
+    errdefer reservation.cancel()
+    let native = try new Cryptomatte(raster = held.raster, live = held.live, layer_name = held.layer_name, prefix = held.prefix,
+                                     manifest = held.manifest, indices = held.indices) in memory.heap
+    return reservation.publish(native, memory.heap)
+
+## An extracted mask: one FLOAT32 channel, "Y", 0..1.
+pub struct Matte:
+    var raster: Raster
+
+    static func own(raster: Raster) -> interop.Reference[Matte]!:
+        var reservation = try interop.Reservation[Matte](matte_type)
+        errdefer reservation.cancel()
+        let native = try new Matte(raster = raster) in memory.heap
+        return reservation.publish(native, memory.heap)
+
+    pub func width() -> usize:
+        return self.raster.width
+
+    pub func height() -> usize:
+        return self.raster.height
+
+    ## The data window's top-left, as the source's.
+    pub func origin() -> (i64, i64):
+        return (self.raster.xmin, self.raster.ymin)
+
+    pub func get_sample(x: usize, y: usize) -> f64!:
+        if x >= self.raster.width or y >= self.raster.height or self.raster.pixels.length == 0:
+            error(invalid, "pixel index out of range")
+        return self.raster.pixels[y * self.raster.width + x]
+
+    ## Write the mask as an EXR, which keeps its float coverage.
+    pub func save(path: str, compression: str = "zip") -> !:
+        try write_exr(&self.raster, path, compression)
+
+    pub mutating func close():
+        self.raster.close()
+
+pub let matte_type: interop.Type[Matte] = interop.Type[Matte]("Matte", Matte.close, closeable = true)
+
+# mark: Writing ===============================================================================
+
+struct Contribution:
+    var bits: u32
+    var weight: f64
+    var next: usize
+
+## Submit every surface in one sample together; uncovered opacity is ID zero.
+## Normalize once by total filter weight, aggregate duplicates, then truncate
+## ranks without renormalizing retained coverage. This preserves transparency.
+pub struct CryptomatteBuilder:
+    var width: usize
+    var height: usize
+    var levels: usize
+    var layer_name: str
+    var heads: usize[]
+    var weights: f64[]
+    var entries: Contribution[]
+    var count: usize
+    var manifest: Manifest
+    var max_bytes: usize
+
+    pub func init(width: usize, height: usize, layer: str = "CryptoObject", levels: usize = 3, max_bytes: usize = 1073741824) -> !:
+        self.width = width
+        self.height = height
+        self.levels = levels
+        self.max_bytes = max_bytes
+        self.layer_name = ""
+        var heads: usize[]
+        var weights: f64[]
+        var entries: Contribution[]
+        self.heads = heads
+        self.weights = weights
+        self.entries = entries
+        self.count = 0
+        self.manifest = Manifest()
+        try self.configure(layer)
+
+    mutating func configure(layer: str) -> !:
+        let width = self.width
+        let height = self.height
+        let levels = self.levels
+        let max_bytes = self.max_bytes
+        if width == 0 or height == 0 or levels == 0 or levels > 256 or layer.length == 0 or layer.length > 240 or strings.contains(layer, "\0"):
+            error(invalid, "invalid Cryptomatte dimensions, name or rank levels")
+        let pixels = width *? height else error(limit, "Cryptomatte dimensions overflow")
+        if pixels > max_bytes // 16:
+            error(limit, "Cryptomatte accumulators exceed byte limit")
+        errdefer self.close()
+        with memory.heap:
+            self.layer_name = try strings.copy(layer)
+            self.heads = try new usize[pixels]
+            self.weights = try new f64[pixels]
+
+    mutating func reserve(additional: usize) -> !:
+        let required = self.count +? additional else error(limit, "Cryptomatte sample count overflows")
+        if required > self.max_bytes // sizeof(Contribution):
+            error(limit, "Cryptomatte contributions exceed byte limit")
+        if required <= self.entries.length:
+            return
+        var capacity = self.entries.length if self.entries.length > 0 else 64
+        while capacity < required:
+            capacity *= 2
+        if capacity > self.max_bytes // sizeof(Contribution):
+            capacity = required
+        let entries = try new Contribution[capacity] in memory.heap
+        for i in 0..<self.count:
+            entries[i] = self.entries[i]
+        if self.entries.length > 0:
+            free(self.entries) in memory.heap
+        self.entries = entries
+
+    mutating func add(pixel: usize, bits: u32, weight: f64):
+        if weight == 0.0:
+            return
+        var index = self.heads[pixel]
+        while index != 0:
+            let entry = &self.entries[index - 1]
+            if entry.bits == bits:
+                entry.weight += weight
+                return
+            index = entry.next
+        self.entries[self.count] = Contribution(bits, weight, self.heads[pixel])
+        self.count += 1
+        self.heads[pixel] = self.count
+
+    pub mutating func add_sample(x: usize, y: usize, names: const str[], coverages: const f64[], weight: f64 = 1.0) -> !:
+        if x >= self.width or y >= self.height or names.length != coverages.length or not math.is_finite(weight) or weight < 0.0 or weight > 1.0e100 or self.heads.length == 0:
+            error(invalid, "invalid Cryptomatte sample")
+        var coverage: f64 = 0.0
+        for amount in coverages:
+            if not math.is_finite(amount) or amount < 0.0 or amount > 1.0:
+                error(invalid, "sample coverage must be in 0-1")
+            coverage += amount
+        if coverage > 1.000000000001:
+            error(invalid, "sample surface coverage exceeds one")
+        let bits = try alloc u32[names.length] in memory.heap
+        defer free(bits) in memory.heap
+        for i in 0..<names.length:
+            bits[i] = hashing.safe_bits(try self.manifest.ensure(names[i]))
+        try self.reserve(names.length + 1)
+        let pixel = y * self.width + x
+        self.weights[pixel] += weight
+        for i in 0..<names.length:
+            self.add(pixel, bits[i], coverages[i] * weight)
+        self.add(pixel, 0, (1.0 - coverage if coverage < 1.0 else 0.0) * weight)
+
+    ## The finished layer, read back as any other.
+    pub func finish() -> interop.Reference[Cryptomatte]!:
+        return try publish(try layer_of(try built_raster(&self), self.layer_name))
+
+    ## Write the Cryptomatte EXR to `path` with its data window at (`x`, `y`);
+    ## with `sidecar` its manifest goes to that file beside it instead.
+    pub func save(path: str, compression: str = "zip", x: i64 = 0, y: i64 = 0, sidecar: str = "") -> !:
+        var image = try built_raster(&self, x, y, sidecar)
+        defer image.close()
+        if sidecar.length > 0:
+            try check_path(path)
+            let file = try paths.join(paths.directory(path), sidecar)
+            defer strings.release(file)
+            var encoded = Buffer(maximum = manifest_byte_limit)
+            defer encoded.close()
+            try self.manifest.encode(&encoded)
+            try files.write_atomic((c_api.str)file, encoded.view())
+        try write_exr(&image, path, compression)
+
+    pub mutating func close():
+        with memory.heap:
+            if self.layer_name.length > 0:
+                strings.release(self.layer_name)
+            if self.heads.length > 0:
+                free(self.heads)
+            if self.weights.length > 0:
+                free(self.weights)
+            if self.entries.length > 0:
+                free(self.entries)
+        self.manifest.close()
+        self.layer_name = ""
+        var heads: usize[]
+        var weights: f64[]
+        var entries: Contribution[]
+        self.heads = heads
+        self.weights = weights
+        self.entries = entries
+        self.count = 0
+
+## The ranked channels and metadata as a raster at origin (`x`, `y`): the
+## manifest embedded, or when `sidecar` names a file only that name
+## (`manif_file`), for the caller to write the manifest there.
+pub func built_raster(builder: const CryptomatteBuilder*, x: i64 = 0, y: i64 = 0, sidecar: str = "") -> Raster!:
+    if builder.heads.length == 0:
+        error(invalid, "Cryptomatte builder is closed")
+    if sidecar.length > 0:
+        try safe_sidecar(sidecar)
+    with memory.heap:
+        var image = Raster(width = builder.width, height = builder.height, xmin = x, ymin = y, max_bytes = builder.max_bytes)
+        errdefer image.close()
+        let suffixes: str[4] = ["R", "G", "B", "A"]
+        for level in 0..<builder.levels:
+            for c in 0..<(usize)4:
+                let name = try channel_name(builder.layer_name, level, suffixes[c])
+                defer strings.release(name)
+                try image.channel(name, .float32)
+        try image.allocate()
+        let stride = image.channels.length
+        let selected = try new usize[builder.levels * 2]
+        defer free(selected)
+        for pixel in 0..<builder.heads.length:
+            var selected_count: usize = 0
+            for rank in 0..<builder.levels * 2:
+                var best: usize = 0
+                var index = builder.heads[pixel]
+                while index != 0:
+                    var used = false
+                    for i in 0..<selected_count:
+                        if selected[i] == index:
+                            used = true
+                    let entry = builder.entries[index - 1]
+                    if not used and (best == 0 or entry.weight > builder.entries[best - 1].weight or (entry.weight == builder.entries[best - 1].weight and entry.bits < builder.entries[best - 1].bits)):
+                        best = index
+                    index = entry.next
+                if best == 0:
+                    break
+                selected[selected_count] = best
+                selected_count += 1
+                let entry = builder.entries[best - 1]
+                image.pixels[pixel * stride + rank * 2] = binary.float_value(entry.bits)
+                image.pixels[pixel * stride + rank * 2 + 1] = entry.weight / builder.weights[pixel]
+        let key = try metadata_key(builder.layer_name)
+        defer key.release()
+        let prefix = try strings.join(["cryptomatte/", key.value, "/"], "")
+        defer strings.release(prefix)
+        try set_metadata(&image, prefix, "name", builder.layer_name)
+        try set_metadata(&image, prefix, "hash", "MurmurHash3_32")
+        try set_metadata(&image, prefix, "conversion", "uint32_to_float32")
+        if sidecar.length > 0:
+            try set_metadata(&image, prefix, "manif_file", sidecar)
+        else:
+            var encoded = Buffer(maximum = manifest_byte_limit)
+            defer encoded.close()
+            try builder.manifest.encode(&encoded)
+            try set_metadata(&image, prefix, "manifest", (str)encoded.view())
+        return image
+
+pub let builder_type: interop.Type[CryptomatteBuilder] = interop.Type[CryptomatteBuilder]("CryptomatteBuilder", CryptomatteBuilder.close, closeable = true)
+
+func small_layer() -> Raster!:
+    var builder = try CryptomatteBuilder(3, 1, levels = 3)
+    defer builder.close()
+    try builder.add_sample(0, 0, ["torus", "равнина"], [0.25, 0.5])
+    try builder.add_sample(0, 0, ["torus"], [1.0], weight = 3.0)
+    var no_names: str[]
+    var no_coverage: f64[]
+    try builder.add_sample(1, 0, no_names, no_coverage)
+    return try built_raster(&builder)
+
+test "a built layer ranks, picks and extracts across ranks":
+    var layer = try layer_of(try small_layer(), "CryptoObject")
+    defer layer.close()
+    assert(layer.rank_count() == 6)
+    assert(layer.manifest_count() == 2)
+    assert(try layer.pick_name(0, 0) == "torus")
+    var ids: f64[1] = [layer.id_for("torus")]
+    var torus = try layer_mask(&layer, ids)
+    defer torus.close()
+    assert(torus.pixels[0] == 0.8125)
+    var background_ids: f64[1] = [0.0]
+    var background = try layer_mask(&layer, background_ids, invert = true)
+    defer background.close()
+    assert(background.pixels[1] == 0.0)
+    layer.close()
+    var refused = false
+    var gone = layer_mask(&layer, ids) catch:
+        refused = true
+        recover Raster()
+    gone.close()
+    assert(refused)
+
+test "a sidecar name that climbs out of its directory is refused":
+    var raster = try small_layer()
+    let key = try metadata_key("CryptoObject")
+    defer key.release()
+    let prefix = try strings.join(["cryptomatte/", key.value, "/"], "")
+    defer strings.release(prefix)
+    try set_metadata(&raster, prefix, "manifest", "")
+    try set_metadata(&raster, prefix, "manif_file", "../escape.json")
+    var rejected = false
+    var layer = layer_of(raster, "CryptoObject") catch:
+        rejected = true
+        recover try layer_of(try small_layer(), "CryptoObject")
+    layer.close()
+    assert(rejected)

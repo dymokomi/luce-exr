@@ -5,7 +5,7 @@ permissions:
 jobs:
   test:
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 20
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
@@ -17,6 +17,7 @@ jobs:
       - id: pins
         run: |
           echo "base=$(cat luce-exr/bootstrap/BASE)" >> "$GITHUB_OUTPUT"
+          echo "luce=$(cat luce-exr/bootstrap/LUCE)" >> "$GITHUB_OUTPUT"
           echo "raster=$(cat luce-exr/bootstrap/RASTER)" >> "$GITHUB_OUTPUT"
           echo "compress=$(cat luce-exr/bootstrap/COMPRESS)" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v7
@@ -37,6 +38,11 @@ jobs:
           done < luce-exr/bootstrap/PACKAGES
       - uses: actions/checkout@v7
         with:
+          repository: dymokomi/luce
+          ref: ${{ steps.pins.outputs.luce }}
+          path: luce
+      - uses: actions/checkout@v7
+        with:
           repository: dymokomi/luce-raster
           ref: ${{ steps.pins.outputs.raster }}
           path: luce-raster
@@ -50,6 +56,13 @@ jobs:
           mkdir -p "$RUNNER_TEMP/luce-bin"
           ln -s "$(command -v clang)" "$RUNNER_TEMP/luce-bin/cc"
           echo "$RUNNER_TEMP/luce-bin" >> "$GITHUB_PATH"
-      - run: cd luce-base && ./build.sh
+      - name: Install independent Cryptomatte oracles
+        working-directory: luce-exr
+        run: |
+          python3 -m venv build/test-env
+          build/test-env/bin/python -m pip install -r tests/requirements.txt
+      - name: Build pinned compilers
+        working-directory: luce-exr
+        run: build/test-env/bin/python tools/bootstrap.py
       - run: ./test.sh
         working-directory: luce-exr

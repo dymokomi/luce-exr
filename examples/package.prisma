@@ -1,0 +1,7 @@
+#prisma 4.0
+def package "luce-exr-examples" {
+    str source = "."
+    def dependency "luce-exr" {
+        str path = ".."
+    }
+}
