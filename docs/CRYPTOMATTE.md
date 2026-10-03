@@ -51,7 +51,7 @@ the seven-character namespace used by the builder.
 ## Authoring
 
 ```luce
-from cryptomatte import CryptomatteBuilder
+from luce_exr.cryptomatte import CryptomatteBuilder
 
 pub func main(arguments: list[str]) -> int!:
     let builder = CryptomatteBuilder(1, 1, "CryptoObject", levels = 3)

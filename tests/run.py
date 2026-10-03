@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def modules():
     """The modules holding tests."""
-    return [p for p in sorted((ROOT / 'src/luce_exr').glob('*.lucb')) if ('\n' + p.read_text()).count('\ntest "')]
+    return [p for p in sorted((ROOT / 'src').glob('*.lucb')) if ('\n' + p.read_text()).count('\ntest "')]
 
 
 def main():

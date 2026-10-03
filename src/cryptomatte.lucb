@@ -11,19 +11,19 @@
 #==============================================================================================
 
 import c as c_api
-import files
-import paths
+import luce_std.files
+import luce_std.paths
 import memory
 import strings
-import math
+import luce_std.math
 import interop
-import luce_exr.crypto_hash as hashing
-import luce_exr.exr as exr
-import binary
-from binary import Buffer
-from luce_exr.manifest import Manifest
-from raster import Raster
-from raster_errors import invalid, corrupt, unsupported, limit
+import crypto_hash as hashing
+import exr
+import luce_raster.binary
+from luce_raster.binary import Buffer
+from manifest import Manifest
+from luce_raster.model import Raster
+from luce_raster.errors import invalid, corrupt, unsupported, limit
 
 ## The most bytes an EXR or a sidecar manifest may take.
 let exr_byte_limit: usize = 4294967296

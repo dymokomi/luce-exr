@@ -1,10 +1,10 @@
 ## Bounded, strict JSON object parser for Cryptomatte manifests.
 import memory
 import strings
-import utf8
-import luce_exr.crypto_hash as hashing
-from binary import Reader, Buffer
-from raster_errors import corrupt, invalid, limit
+import luce_std.utf8
+import crypto_hash as hashing
+from luce_raster.binary import Reader, Buffer
+from luce_raster.errors import corrupt, invalid, limit
 
 pub struct Entry:
     pub var name: str

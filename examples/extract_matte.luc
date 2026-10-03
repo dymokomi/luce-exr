@@ -1,4 +1,4 @@
-from cryptomatte import Cryptomatte
+from luce_exr.cryptomatte import Cryptomatte
 
 pub func main(arguments: list[str]) -> int!:
     if arguments.length != 4:

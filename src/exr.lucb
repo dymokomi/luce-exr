@@ -1,14 +1,14 @@
 ## OpenEXR v2 containers. All byte parsing and compression run in Luce Base.
 import memory
 import strings
-import math
-import binary
-import compress
-import luce_exr.piz as piz
-import luce_exr.pxr24 as pxr24
-from binary import Reader, Buffer
-from raster import Raster, Chunk, SampleType
-from raster_errors import corrupt, unsupported, invalid, limit
+import luce_std.math
+import luce_raster.binary
+import luce_compress.compress
+import piz
+import pxr24
+from luce_raster.binary import Reader, Buffer
+from luce_raster.model import Raster, Chunk, SampleType
+from luce_raster.errors import corrupt, unsupported, invalid, limit
 
 func int32(reader: Reader*) -> i64!:
     return (i64)(i32)(try reader.uint(4))

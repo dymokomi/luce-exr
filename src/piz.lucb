@@ -2,9 +2,9 @@
 ## SPDX-License-Identifier: BSD-3-Clause (see LICENSES/OpenEXR.txt).
 ## Copyright (c) Contributors to the OpenEXR Project.
 import memory
-from binary import Reader, Buffer
-from raster import Raster, Chunk
-from raster_errors import corrupt
+from luce_raster.binary import Reader, Buffer
+from luce_raster.model import Raster, Chunk
+from luce_raster.errors import corrupt
 
 struct Bits:
     var data: const u8[]

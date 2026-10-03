@@ -1,10 +1,10 @@
 ## The manifest and Cryptomatte hash tests, run by tests/run.py with `luce-base test`.
 import interop
 import memory
-from luce_exr.manifest import Manifest
-from binary import Buffer
-import binary
-import luce_exr.crypto_hash as hashing
+from manifest import Manifest
+from luce_raster.binary import Buffer
+import luce_raster.binary
+import crypto_hash as hashing
 
 test "Cryptomatte official hash vectors and exponent remapping":
     assert(hashing.murmur("torus") == 4053562365)

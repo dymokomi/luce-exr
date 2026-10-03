@@ -1,8 +1,8 @@
 ## PXR24 predictor reconstruction, based on OpenEXR's BSD-3-Clause algorithm.
 ## Copyright (c) Contributors to the OpenEXR Project. See LICENSES/OpenEXR.txt.
 import memory
-import compress
-from raster import Raster, Chunk
+import luce_compress.compress
+from luce_raster.model import Raster, Chunk
 
 pub func decode(image: const Raster*, chunk: Chunk, data: const u8[], out: u8[]) -> !:
     var stride: usize = 0
