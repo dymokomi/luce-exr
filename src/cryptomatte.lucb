@@ -11,15 +11,14 @@
 #==============================================================================================
 
 import c as c_api
-import luce_std.files
-import luce_std.paths
+from luce_std import files, paths
 import memory
 import strings
-import luce_std.math
+from luce_std import math
 import interop
 import crypto_hash as hashing
 import exr
-import luce_raster.binary
+from luce_raster import binary
 from luce_raster.binary import Buffer
 from manifest import Manifest
 from luce_raster.model import Raster

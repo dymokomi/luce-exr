@@ -3,7 +3,7 @@ import interop
 import memory
 from manifest import Manifest
 from luce_raster.binary import Buffer
-import luce_raster.binary
+from luce_raster import binary
 import crypto_hash as hashing
 
 test "Cryptomatte official hash vectors and exponent remapping":

@@ -1,9 +1,9 @@
 ## OpenEXR v2 containers. All byte parsing and compression run in Luce Base.
 import memory
 import strings
-import luce_std.math
-import luce_raster.binary
-import luce_compress.compress
+from luce_std import math
+from luce_raster import binary
+from luce_compress import compress
 import piz
 import pxr24
 from luce_raster.binary import Reader, Buffer
