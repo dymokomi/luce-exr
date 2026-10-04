@@ -125,7 +125,11 @@ func read_exr(path: str, decode: bool) -> Raster!:
     errdefer raster.close()
     with memory.heap:
         raster.path = try strings.copy(path)
-        raster.encoded = try files.read_limit((c_api.str)raster.path, exr_byte_limit)
+        let file = try files.read((c_api.str)raster.path, limit = exr_byte_limit)
+        defer file.release()
+        # The raster frees its bytes on the heap, so it keeps a copy of them.
+        raster.encoded = try alloc u8[file.value.length]
+        memory.copy(raster.encoded, file.value, file.value.length)
     try exr.probe(&raster)
     if decode:
         try decode_all(&raster)
@@ -228,10 +232,10 @@ pub struct Cryptomatte:
                     if native.path.length == 0:
                         error(invalid, "byte-backed EXR has no directory for a sidecar")
                     let file = try paths.join(paths.directory(native.path), sidecar)
-                    defer strings.release(file)
-                    let bytes = try files.read_limit((c_api.str)file, manifest_byte_limit)
-                    defer free(bytes)
-                    try self.manifest.parse((str)bytes)
+                    defer file.release()
+                    let bytes = try files.read((c_api.str)file.value, limit = manifest_byte_limit)
+                    defer bytes.release()
+                    try self.manifest.parse((str)bytes.value)
 
     func ensure_open() -> !:
         if not self.live:
@@ -521,11 +525,11 @@ pub struct CryptomatteBuilder:
         if sidecar.length > 0:
             try check_path(path)
             let file = try paths.join(paths.directory(path), sidecar)
-            defer strings.release(file)
+            defer file.release()
             var encoded = Buffer(maximum = manifest_byte_limit)
             defer encoded.close()
             try self.manifest.encode(&encoded)
-            try files.write_atomic((c_api.str)file, encoded.view())
+            try files.write_atomic((c_api.str)file.value, encoded.view())
         try write_exr(&image, path, compression)
 
     pub mutating func close():

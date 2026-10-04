@@ -1,7 +1,7 @@
 #prisma 4.0
 def package "luce-exr" {
     str owner = "dymokomi"
-    str version = "0.3.1"
+    str version = "0.3.2"
     str kind = "package"
     str language = "luce-base"
     str description = "An OpenEXR reader and writer for Luce/Base: scanline and tiled images, none/RLE/ZIP/PIZ/PXR24 compression, half and float channels, and Cryptomatte 1.2 layers."
@@ -16,13 +16,13 @@ def package "luce-exr" {
 
     def dependency "luce-compress" {
         str owner = "dymokomi"
-        str version = "^0.4.0"
+        str version = "^0.4.2"
         str path = "../luce-compress"
     }
 
     def dependency "luce-std" {
         str owner = "dymokomi"
-        str version = "^0.2.0"
+        str version = "^0.3.1"
         str path = "../luce-std"
     }
 }
