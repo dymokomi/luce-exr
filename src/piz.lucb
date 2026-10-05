@@ -11,7 +11,7 @@ struct Bits:
     var position: usize
     var end: usize
 
-    mutating func read(count: usize) -> u64!:
+    func read(count: usize) -> u64!:
         if count > self.end - self.position:
             error(corrupt, "truncated PIZ bitstream")
         var value: u64 = 0
@@ -26,7 +26,7 @@ func huffman(data: const u8[], out: u16[]) -> !:
     let last_symbol = (usize)(try r.uint(4))
     let table_bytes = (usize)(try r.uint(4))
     let bit_count = (usize)(try r.uint(4))
-    discard(try r.uint(4))
+    _ = try r.uint(4)
     if first_symbol > last_symbol or last_symbol > 65536:
         error(corrupt, "invalid PIZ Huffman symbol range")
     let lengths = try new usize[65537] in memory.heap
@@ -252,7 +252,7 @@ struct Writer:
     var count: usize
     var bits: usize
 
-    mutating func put(value: u64, count: usize) -> !:
+    func put(value: u64, count: usize) -> !:
         self.bits += count
         var n = count
         while n > 0:
@@ -264,7 +264,7 @@ struct Writer:
                 self.count = 0
                 self.pending = 0
 
-    mutating func flush() -> !:
+    func flush() -> !:
         if self.count > 0:
             try self.out.byte((u8)(self.pending << (8 - self.count)))
             self.count = 0

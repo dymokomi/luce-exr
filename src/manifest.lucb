@@ -27,7 +27,7 @@ pub struct Manifest:
             index = entry.next
         return none
 
-    pub mutating func add(name: str, bits: u32) -> !:
+    pub func add(name: str, bits: u32) -> !:
         if self.find(name) != none:
             error(invalid, "duplicate manifest name")
         if self.count >= 1048576 or name.length > 1048576 or not utf8.valid(name.bytes):
@@ -48,7 +48,7 @@ pub struct Manifest:
             self.count += 1
             self.buckets[bucket] = self.count
 
-    pub mutating func ensure(name: str) -> u32!:
+    pub func ensure(name: str) -> u32!:
         if let index = self.find(name):
             return self.entries[index].bits
         let bits = hashing.murmur(name)
@@ -66,7 +66,7 @@ pub struct Manifest:
                 return self.entries[i].name
         return ""
 
-    pub mutating func parse(text: str) -> !:
+    pub func parse(text: str) -> !:
         if self.count != 0 or text.length > 67108864:
             error(invalid, "manifest parser requires empty storage and at most 64 MiB")
         var r = Reader(data = text.bytes)
@@ -116,7 +116,7 @@ pub struct Manifest:
             try quote(hashing.hexadecimal(self.entries[i].bits, digits_buffer), output)
         try output.byte('}')
 
-    pub mutating func close():
+    pub func close():
         with memory.heap:
             for i in 0..<self.count:
                 strings.release(self.entries[i].name)

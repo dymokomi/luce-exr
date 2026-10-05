@@ -128,7 +128,7 @@ func read_exr(path: str, decode: bool) -> Raster!:
         let file = try files.read((c_api.str)raster.path, limit = exr_byte_limit)
         defer file.release()
         # The raster frees its bytes on the heap, so it keeps a copy of them.
-        raster.encoded = try alloc u8[file.value.length]
+        raster.encoded = try new u8[file.value.length] ---
         memory.copy(raster.encoded, file.value, file.value.length)
     try exr.probe(&raster)
     if decode:
@@ -164,11 +164,11 @@ pub struct Cryptomatte:
 
     ## Layer `layer` of the EXR at `path`; a sidecar manifest is read from beside it
     ## unless `load_sidecar` is false.
-    pub static func open(path: str, layer: str, load_sidecar: bool = true) -> interop.Reference[Cryptomatte]!:
+    pub func open(path: str, layer: str, load_sidecar: bool = true) -> interop.Reference[Cryptomatte]!:
         # `of` owns the raster from here, failing or not.
         return try publish(try layer_of(try read_exr(path, true), layer, load_sidecar))
 
-    mutating func configure(layer: str, load_sidecar: bool) -> !:
+    func configure(layer: str, load_sidecar: bool) -> !:
         let native = &self.raster
         with memory.heap:
             self.layer_name = try strings.copy(layer)
@@ -293,7 +293,7 @@ pub struct Cryptomatte:
 
     ## The coverage of `names` together, across every rank; `invert` gives the rest.
     pub func extract(names: const str[], invert: bool = false) -> interop.Reference[Matte]!:
-        let ids = try alloc f64[names.length] in memory.heap
+        let ids = try new f64[names.length] --- in memory.heap
         defer free(ids) in memory.heap
         for i in 0..<names.length:
             ids[i] = self.id_for(names[i])
@@ -304,7 +304,7 @@ pub struct Cryptomatte:
         errdefer mask.close()
         return try Matte.own(mask)
 
-    pub mutating func close():
+    pub func close():
         if self.live:
             self.raster.close()
             self.live = false
@@ -361,7 +361,6 @@ pub func layer_mask(layer: const Cryptomatte*, ids: const f64[], invert: bool = 
             mask.pixels[y * width + x] = 1.0 - coverage if invert else coverage
     return mask
 
-
 ## `layer` on the heap as a Luce object.
 func publish(layer: Cryptomatte) -> interop.Reference[Cryptomatte]!:
     var held = layer
@@ -376,7 +375,7 @@ func publish(layer: Cryptomatte) -> interop.Reference[Cryptomatte]!:
 pub struct Matte:
     var raster: Raster
 
-    static func own(raster: Raster) -> interop.Reference[Matte]!:
+    func own(raster: Raster) -> interop.Reference[Matte]!:
         var reservation = try interop.Reservation[Matte](matte_type)
         errdefer reservation.cancel()
         let native = try new Matte(raster = raster) in memory.heap
@@ -401,7 +400,7 @@ pub struct Matte:
     pub func save(path: str, compression: str = "zip") -> !:
         try write_exr(&self.raster, path, compression)
 
-    pub mutating func close():
+    pub func close():
         self.raster.close()
 
 pub let matte_type: interop.Type[Matte] = interop.Type[Matte]("Matte", Matte.close, closeable = true)
@@ -444,7 +443,7 @@ pub struct CryptomatteBuilder:
         self.manifest = Manifest()
         try self.configure(layer)
 
-    mutating func configure(layer: str) -> !:
+    func configure(layer: str) -> !:
         let width = self.width
         let height = self.height
         let levels = self.levels
@@ -460,16 +459,16 @@ pub struct CryptomatteBuilder:
             self.heads = try new usize[pixels]
             self.weights = try new f64[pixels]
 
-    mutating func reserve(additional: usize) -> !:
+    func reserve(additional: usize) -> !:
         let required = self.count +? additional else error(limit, "Cryptomatte sample count overflows")
-        if required > self.max_bytes // sizeof(Contribution):
+        if required > self.max_bytes // memory.size_of(Contribution):
             error(limit, "Cryptomatte contributions exceed byte limit")
         if required <= self.entries.length:
             return
         var capacity = self.entries.length if self.entries.length > 0 else 64
         while capacity < required:
             capacity *= 2
-        if capacity > self.max_bytes // sizeof(Contribution):
+        if capacity > self.max_bytes // memory.size_of(Contribution):
             capacity = required
         let entries = try new Contribution[capacity] in memory.heap
         for i in 0..<self.count:
@@ -478,7 +477,7 @@ pub struct CryptomatteBuilder:
             free(self.entries) in memory.heap
         self.entries = entries
 
-    mutating func add(pixel: usize, bits: u32, weight: f64):
+    func add(pixel: usize, bits: u32, weight: f64):
         if weight == 0.0:
             return
         var index = self.heads[pixel]
@@ -492,7 +491,7 @@ pub struct CryptomatteBuilder:
         self.count += 1
         self.heads[pixel] = self.count
 
-    pub mutating func add_sample(x: usize, y: usize, names: const str[], coverages: const f64[], weight: f64 = 1.0) -> !:
+    pub func add_sample(x: usize, y: usize, names: const str[], coverages: const f64[], weight: f64 = 1.0) -> !:
         if x >= self.width or y >= self.height or names.length != coverages.length or not math.is_finite(weight) or weight < 0.0 or weight > 1.0e100 or self.heads.length == 0:
             error(invalid, "invalid Cryptomatte sample")
         var coverage: f64 = 0.0
@@ -502,7 +501,7 @@ pub struct CryptomatteBuilder:
             coverage += amount
         if coverage > 1.000000000001:
             error(invalid, "sample surface coverage exceeds one")
-        let bits = try alloc u32[names.length] in memory.heap
+        let bits = try new u32[names.length] --- in memory.heap
         defer free(bits) in memory.heap
         for i in 0..<names.length:
             bits[i] = hashing.safe_bits(try self.manifest.ensure(names[i]))
@@ -532,7 +531,7 @@ pub struct CryptomatteBuilder:
             try files.write_atomic((c_api.str)file.value, encoded.view())
         try write_exr(&image, path, compression)
 
-    pub mutating func close():
+    pub func close():
         with memory.heap:
             if self.layer_name.length > 0:
                 strings.release(self.layer_name)

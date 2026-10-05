@@ -60,7 +60,7 @@ func header(image: Raster*, reader: Reader*, selected: bool = true) -> usize!:
         if name.length == 0:
             break
         let kind = try channels.uint(4)
-        discard(try channels.take(4))
+        _ = try channels.take(4)
         let xs = try channels.uint(4)
         let ys = try channels.uint(4)
         if xs != 1 or ys != 1:
@@ -72,7 +72,7 @@ func header(image: Raster*, reader: Reader*, selected: bool = true) -> usize!:
         try image.channel(name, .uint32 if kind == 0 else .float16 if kind == 1 else .float32)
         previous = name
     if selected:
-        discard(try image.validate())
+        _ = try image.validate()
     elif image.width > 1000000 or image.height > 1000000 or image.channels.length == 0:
         error(corrupt, "invalid unselected EXR part dimensions or channels")
     var tw = image.width
@@ -91,7 +91,7 @@ func header(image: Raster*, reader: Reader*, selected: bool = true) -> usize!:
     let across = (image.width + tw - 1) // tw
     let down = (image.height + th - 1) // th
     let total = across * down
-    if total > image.max_bytes // sizeof(Chunk):
+    if total > image.max_bytes // memory.size_of(Chunk):
         error(limit, "EXR chunk table exceeds byte limit")
     if selected:
         image.chunks = try new Chunk[total] in memory.heap
@@ -166,7 +166,7 @@ pub func probe(image: Raster*) -> !:
                 error(corrupt, "EXR scanline table disagrees with chunk coordinates")
         chunk.size = try r.uint(4)
         chunk.offset = offset + (u64)r.position
-        discard(try binary.slice(image.encoded, chunk.offset, chunk.size))
+        _ = try binary.slice(image.encoded, chunk.offset, chunk.size)
         image.chunks[i] = chunk
     image.file_format = "EXR"
 
@@ -196,7 +196,7 @@ pub func decode_chunk(image: Raster*, index: usize) -> !:
     let expected = chunk.width * chunk.height * stride
     if expected > image.max_bytes:
         error(limit, "EXR chunk exceeds byte limit")
-    let raw = try alloc u8[expected] in memory.heap
+    let raw = try new u8[expected] --- in memory.heap
     defer free(raw) in memory.heap
     let data = try binary.slice(image.encoded, chunk.offset, chunk.size)
     if data.length == expected:
@@ -208,7 +208,7 @@ pub func decode_chunk(image: Raster*, index: usize) -> !:
     else:
         if data.length > expected or image.compression == 0:
             error(corrupt, "invalid EXR compressed chunk length")
-        let shuffled = try alloc u8[expected] in memory.heap
+        let shuffled = try new u8[expected] --- in memory.heap
         defer free(shuffled) in memory.heap
         if image.compression == 1:
             try rle_decode(data, shuffled)
@@ -350,7 +350,7 @@ pub func encode(image: const Raster*, output: Buffer*, compression: str = "zip",
         if codec == 4:
             try piz.encode(image, Chunk(width = cols, height = rows), order, raw.view(), &packed)
         elif codec > 0:
-            let shuffled = try alloc u8[raw.used] in memory.heap
+            let shuffled = try new u8[raw.used] --- in memory.heap
             defer free(shuffled) in memory.heap
             let half = (raw.used + 1) // 2
             for i in 0..<raw.used:

@@ -8,7 +8,7 @@ pub func decode(image: const Raster*, chunk: Chunk, data: const u8[], out: u8[])
     var stride: usize = 0
     for channel in image.channels:
         stride += 2 if channel.kind == .float16 else 3 if channel.kind == .float32 else 4
-    let raw = try alloc u8[chunk.width * chunk.height * stride] in memory.heap
+    let raw = try new u8[chunk.width * chunk.height * stride] --- in memory.heap
     defer free(raw) in memory.heap
     try compress.inflate(data, raw)
     var source: usize = 0
