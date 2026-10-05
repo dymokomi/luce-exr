@@ -164,7 +164,7 @@ pub struct Cryptomatte:
 
     ## Layer `layer` of the EXR at `path`; a sidecar manifest is read from beside it
     ## unless `load_sidecar` is false.
-    pub func open(path: str, layer: str, load_sidecar: bool = true) -> interop.Reference[Cryptomatte]!:
+    pub static func open(path: str, layer: str, load_sidecar: bool = true) -> interop.Reference[Cryptomatte]!:
         # `of` owns the raster from here, failing or not.
         return try publish(try layer_of(try read_exr(path, true), layer, load_sidecar))
 
@@ -375,7 +375,7 @@ func publish(layer: Cryptomatte) -> interop.Reference[Cryptomatte]!:
 pub struct Matte:
     var raster: Raster
 
-    func own(raster: Raster) -> interop.Reference[Matte]!:
+    static func own(raster: Raster) -> interop.Reference[Matte]!:
         var reservation = try interop.Reservation[Matte](matte_type)
         errdefer reservation.cancel()
         let native = try new Matte(raster = raster) in memory.heap
