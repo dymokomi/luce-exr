@@ -1,7 +1,7 @@
 #prisma 4.0
 def package "luce-exr" {
     str owner = "dymokomi"
-    str version = "0.6.0"
+    str version = "0.6.1"
     str kind = "package"
     str language = "luce-base"
     str description = "An OpenEXR reader and writer for Luce/Base: scanline and tiled images, none/RLE/ZIP/PIZ/PXR24 compression, half and float channels, and Cryptomatte 1.2 layers."
