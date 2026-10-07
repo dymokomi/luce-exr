@@ -1,4 +1,4 @@
-## The manifest and Cryptomatte hash tests, run by tests/run.py with `luce-base test`.
+## The manifest and Cryptomatte hash tests, run by `luc test`.
 import interop
 import memory
 from manifest import Manifest

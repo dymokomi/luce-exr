@@ -6,14 +6,18 @@ import struct
 import subprocess
 import tempfile
 import re
-import numpy as np
-import OpenEXR
+try:
+    import numpy as np
+    import OpenEXR
+except ImportError:
+    print('skip: numpy and OpenEXR are not installed (pip install -r tests/psyop/requirements.txt)')
+    raise SystemExit(0)
 
-ROOT=Path(__file__).resolve().parents[1]
+ROOT=Path(__file__).resolve().parents[2]
 count=0
 with tempfile.TemporaryDirectory() as tmp:
     for path in sorted((ROOT/'tests/fixtures/cryptomatte').glob('*.exr')):
-        result=subprocess.run([str(ROOT/'build/crypto_fixture'),str(path),tmp],capture_output=True,text=True,timeout=90)
+        result=subprocess.run([str(ROOT/'build/tests/psyop/crypto_fixture'),str(path),tmp],capture_output=True,text=True,timeout=90)
         assert result.returncode==0,(path,result.stderr)
         output=result.stdout.splitlines()
         image=OpenEXR.File(str(path),separate_channels=True); header=image.header(); channels=image.channels()

@@ -1,0 +1,22 @@
+# Cryptomatte against Psyop's official fixtures: crypto_fixture.luc extracts every mask of
+# tests/fixtures/cryptomatte, and check_cryptomatte.py compares each pixel with OpenEXR's
+# own reading of the file (numpy and OpenEXR, tests/psyop/requirements.txt; the Python of
+# build/test-env is used when it exists). Without them it skips.
+from luce_std import files, paths, process
+
+let failed = ErrorCode.package(1)
+
+pub func main(arguments: list[str]) -> int!:
+    let root = process.current_directory()
+    let here = process.variable("LUC_TEST_DIR") else "tests/psyop"
+    let output = paths.join(root, "build/tests/psyop/crypto_fixture")
+    let built = process.run(process.variable("LUCE") else "luce", ["build", paths.join(here, "crypto_fixture.luc"), "--native", "-o", output])
+    if built.exit_code != 0:
+        error(failed, f"crypto_fixture does not build: {built.output}{built.error_output}")
+    let local = paths.join(root, "build/test-env/bin/python")
+    let python = local if files.exists(local) else "python3"
+    let checked = process.run(python, [paths.join(here, "check_cryptomatte.py")])
+    print(checked.output.trim_end())
+    if checked.exit_code != 0:
+        error(failed, f"check_cryptomatte.py: exit status {checked.exit_code}\n{checked.error_output}")
+    return 0

@@ -1,6 +1,9 @@
+from luce_std import files, paths, process
 from cryptomatte import Cryptomatte, CryptomatteBuilder, hash_name, id_for_name, hash_to_id, metadata_key, layer_count, layer_name
 
 pub func main(arguments: list[str]) -> int!:
+    let scratch = paths.join(process.current_directory(), "build/tests/cryptomatte/scratch")
+    files.ensure_directory(scratch)
     assert(hash_name("torus") == 4053562365)
     assert(hash_name("равнина") == 2518896926)
     assert(id_for_name("torus") < -1.5494e30)
@@ -26,23 +29,23 @@ pub func main(arguments: list[str]) -> int!:
     assert(combined.get_sample(0, 0) == 0.9375)
     let truncated = layer.extract(["a", "b", "c", "d", "e", "f", "g", "h"])
     assert(truncated.get_sample(2, 0) == 0.75)
-    builder.save(arguments[0] + "/cryptomatte.exr")
-    let decoded = Cryptomatte.open(arguments[0] + "/cryptomatte.exr", "CryptoObject")
+    builder.save(scratch + "/cryptomatte.exr")
+    let decoded = Cryptomatte.open(scratch + "/cryptomatte.exr", "CryptoObject")
     assert(decoded.extract(["torus"]).get_sample(0, 0) == 0.8125)
-    assert(layer_count(arguments[0] + "/cryptomatte.exr") == 1)
-    assert(layer_name(arguments[0] + "/cryptomatte.exr", 0) == "CryptoObject")
-    layer.write_manifest(arguments[0] + "/writer.json")
-    builder.save(arguments[0] + "/sidecar.exr", compression = "piz", x = -10, y = 20, sidecar = "sidecar.json")
-    let sidecar = Cryptomatte.open(arguments[0] + "/sidecar.exr", "CryptoObject")
+    assert(layer_count(scratch + "/cryptomatte.exr") == 1)
+    assert(layer_name(scratch + "/cryptomatte.exr", 0) == "CryptoObject")
+    layer.write_manifest(scratch + "/writer.json")
+    builder.save(scratch + "/sidecar.exr", compression = "piz", x = -10, y = 20, sidecar = "sidecar.json")
+    let sidecar = Cryptomatte.open(scratch + "/sidecar.exr", "CryptoObject")
     assert(sidecar.manifest_count() == 10)
     assert(sidecar.extract(["torus"]).origin() == (-10, 20))
-    let no_sidecar = Cryptomatte.open(arguments[0] + "/sidecar.exr", "CryptoObject", load_sidecar = false)
+    let no_sidecar = Cryptomatte.open(scratch + "/sidecar.exr", "CryptoObject", load_sidecar = false)
     assert(no_sidecar.manifest_count() == 0)
     var rejected = false
-    builder.save(arguments[0] + "/escape.exr", sidecar = "../escape.json") catch:
+    builder.save(scratch + "/escape.exr", sidecar = "../escape.json") catch:
         rejected = true
     assert(rejected)
-    let mask_path = arguments[0] + "/mask.exr"
+    let mask_path = scratch + "/mask.exr"
     torus.save(mask_path)
     layer.close()
     var refused = false

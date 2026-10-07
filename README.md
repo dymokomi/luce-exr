@@ -15,10 +15,9 @@ An OpenEXR reader and writer for Luce/Base: scanline and tiled images, none/RLE/
 Split out of luce-image on 2026-09-22 so every file format is its own package, like luce-svg and luce-psd. luce-image depends on it for `Image.open`/`save`; it depends on luce-raster, luce-compress.
 
 ```sh
-python3 tools/bootstrap.py                      # the pinned compilers, into build/toolchain
-python3 -m venv build/test-env
-build/test-env/bin/python -m pip install -r tests/requirements.txt
-./test.sh    # module tests native and C, the Cryptomatte Luce API, Psyop fixtures against OpenEXR
+python3 -m venv build/test-env                  # OpenEXR and numpy, for the Psyop fixtures
+build/test-env/bin/python -m pip install -r tests/psyop/requirements.txt
+luc test     # module tests, the Cryptomatte Luce API, Psyop fixtures against OpenEXR
 ```
 
 The Cryptomatte fixtures keep their BSD-3-Clause notice
